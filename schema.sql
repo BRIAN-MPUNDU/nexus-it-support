@@ -1,0 +1,10 @@
+CREATE TABLE IF NOT EXISTS records (
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    title VARCHAR(80) NOT NULL,
+    category VARCHAR(40) NOT NULL,
+    description VARCHAR(300) NOT NULL,
+    status VARCHAR(20) NOT NULL,
+
+    CONSTRAINT valid_status
+    CHECK (status IN ('Pending', 'In progress', 'Completed'))
+);
