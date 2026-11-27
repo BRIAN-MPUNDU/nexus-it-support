@@ -1,10 +1,7 @@
-require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
 const pool = require("./db");
-
-const recordsRouter = require("./routes/records");
 
 const app = express();
 
@@ -16,104 +13,26 @@ app.use(cors({
 
 app.use(express.json());
 
+// Create the table if it does not exist.
+// Existing records are preserved.
+async function initializeDatabase() {
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS records (
+            id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            title VARCHAR(80) NOT NULL,
+            category VARCHAR(40) NOT NULL,
+            description VARCHAR(300) NOT NULL,
+            status VARCHAR(20) NOT NULL
+                CHECK (status IN ('Pending', 'In progress', 'Completed'))
+        );
+    `);
+
+    console.log("Records table is ready.");
+}
+
 // API GUIDE
 app.get("/", (req, res) => {
-    const baseURL = `${req.protocol}://${req.get("host")}`;
-
-    res.send(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Nexus IT Support Desk API</title>
-            <style>
-                body {
-                    font-family: Arial, sans-serif;
-                    margin: 40px;
-                    background: #f4f6f9;
-                    color: #222;
-                }
-                h1 { color: #173b65; }
-                table {
-                    border-collapse: collapse;
-                    width: 100%;
-                    background: white;
-                }
-                th, td {
-                    border: 1px solid #ccc;
-                    padding: 12px;
-                    text-align: left;
-                }
-                th { background: #173b65; color: white; }
-                code {
-                    background: #e8edf4;
-                    padding: 3px 6px;
-                }
-                pre {
-                    background: #e8edf4;
-                    padding: 15px;
-                    overflow-x: auto;
-                }
-            </style>
-        </head>
-        <body>
-            <h1>Nexus IT Support Desk API</h1>
-
-            <p><strong>Student Number:</strong> 202509173</p>
-            <p><strong>Description:</strong> A REST API for managing IT support records.</p>
-            <p><strong>Base URL:</strong> ${baseURL}</p>
-
-            <h2>Useful Links</h2>
-            <p><a href="${baseURL}/health">Health Check</a></p>
-            <p><a href="${baseURL}/api/records">View All Records</a></p>
-
-            <h2>Available Routes</h2>
-
-            <table>
-                <tr>
-                    <th>Method</th>
-                    <th>Endpoint</th>
-                    <th>Description</th>
-                </tr>
-                <tr><td>GET</td><td>/</td><td>API guide</td></tr>
-                <tr><td>GET</td><td>/health</td><td>Check API and database health</td></tr>
-                <tr><td>GET</td><td>/api/records</td><td>Get all records</td></tr>
-                <tr><td>GET</td><td>/api/records/:id</td><td>Get one record</td></tr>
-                <tr><td>POST</td><td>/api/records</td><td>Create a record</td></tr>
-                <tr><td>PUT</td><td>/api/records/:id</td><td>Update a record</td></tr>
-                <tr><td>DELETE</td><td>/api/records/:id</td><td>Delete a record</td></tr>
-            </table>
-
-            <h2>Record Fields</h2>
-            <ul>
-                <li>title: 3–80 characters</li>
-                <li>category: 2–40 characters</li>
-                <li>description: 5–300 characters</li>
-                <li>status: Pending, In progress, or Completed</li>
-                <li>id: generated automatically by the database</li>
-            </ul>
-
-            <h2>Example POST/PUT JSON Body</h2>
-            <pre>{
-  "title": "Computer not starting",
-  "category": "Hardware",
-  "description": "The office computer does not start.",
-  "status": "Pending"
-}</pre>
-
-            <h2>HTTP Status Codes</h2>
-            <ul>
-                <li>200: Request successful</li>
-                <li>201: Record created</li>
-                <li>400: Invalid input or malformed JSON</li>
-                <li>404: Record or route not found</li>
-                <li>500: Unexpected server error</li>
-                <li>503: Database unavailable</li>
-            </ul>
-
-            <p>Note: The hosted service may take a short time to respond after being idle.</p>
-        </body>
-        </html>
-    `);
+    res.send("Nexus IT Support Desk API is running.");
 });
 
 // HEALTH CHECK
@@ -127,7 +46,6 @@ app.get("/health", async (req, res) => {
         });
     } catch (error) {
         console.error(error);
-
         res.status(503).json({
             status: "ERROR",
             message: "Database unavailable."
@@ -136,32 +54,94 @@ app.get("/health", async (req, res) => {
 });
 
 // RECORD ROUTES
-app.use("/api/records", recordsRouter);
+app.get("/api/records", async (req, res) => {
+    try {
+        const result = await pool.query(
+            "SELECT * FROM records ORDER BY id ASC"
+        );
+        res.json(result.rows);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal server error." });
+    }
+});
+
+app.post("/api/records", async (req, res) => {
+    try {
+        const { title, category, description, status } = req.body;
+
+        const result = await pool.query(
+            `INSERT INTO records (title, category, description, status)
+             VALUES ($1, $2, $3, $4) RETURNING *`,
+            [title, category, description, status]
+        );
+
+        res.status(201).json(result.rows[0]);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal server error." });
+    }
+});
+
+app.put("/api/records/:id", async (req, res) => {
+    try {
+        const { title, category, description, status } = req.body;
+
+        const result = await pool.query(
+            `UPDATE records
+             SET title = $1, category = $2, description = $3, status = $4
+             WHERE id = $5 RETURNING *`,
+            [title, category, description, status, req.params.id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: "Record not found." });
+        }
+
+        res.json(result.rows[0]);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal server error." });
+    }
+});
+
+app.delete("/api/records/:id", async (req, res) => {
+    try {
+        const result = await pool.query(
+            "DELETE FROM records WHERE id = $1 RETURNING *",
+            [req.params.id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: "Record not found." });
+        }
+
+        res.json({ message: "Record deleted successfully." });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal server error." });
+    }
+});
 
 // UNKNOWN ROUTE
 app.use((req, res) => {
-    res.status(404).json({
-        error: "Route not found."
-    });
+    res.status(404).json({ error: "Route not found." });
 });
 
-// ERROR HANDLER
-app.use((err, req, res, next) => {
-    console.error(err);
+// START SERVER AFTER DATABASE INITIALIZATION
+async function startServer() {
+    try {
+        await initializeDatabase();
 
-    if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
-        return res.status(400).json({
-            error: "Invalid JSON format."
+        const PORT = process.env.PORT || 3000;
+
+        app.listen(PORT, "0.0.0.0", () => {
+            console.log(`Server running on port ${PORT}`);
         });
+    } catch (error) {
+        console.error("Database initialization failed:", error);
+        process.exit(1);
     }
+}
 
-    res.status(500).json({
-        error: "Internal server error."
-    });
-});
-
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on port ${PORT}`);
-});
+startServer();
